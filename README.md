@@ -1,60 +1,172 @@
-## What this is
-A Spring Boot Java application that implements an authentication service (controllers, OTP flow, user management) — intended as the auth component for a larger system (BlueScope). The code organizes REST controllers, service layer, persistence (repositories/entities) and security configuration for authentication/OTP flows.
+# Auth Service
 
-### Stack
-- **Language(s):** Java (100%)
-- **Framework / runtime:** Spring Boot (Maven-built Spring Boot application)
-- **Notable libraries / concepts (from code structure):** Spring Web (MVC controllers), Spring Security (security package/config), Spring Data JPA (repo/entity layers), Maven wrapper for build/run
+A Spring Boot authentication service supporting JWT-based authentication, OAuth2 social login (Google & GitHub), email verification, and MySQL persistence.
 
-## How it's organized
+---
+
+## Features
+
+- JWT access & refresh token authentication
+- OAuth2 social login — Google and GitHub
+- Email support via SMTP (e.g. password reset, verification)
+- MySQL database with HikariCP connection pooling
+- Spring Security with fine-grained logging
+- Environment-variable-driven configuration (no secrets in code)
+
+---
+
+## Tech Stack
+
+| Layer        | Technology                        |
+|--------------|-----------------------------------|
+| Language     | Java                              |
+| Framework    | Spring Boot                       |
+| Security     | Spring Security, JWT, OAuth2      |
+| Database     | MySQL                             |
+| ORM          | Spring Data JPA / Hibernate       |
+| Connection   | HikariCP                          |
+| Mail         | Spring Mail (SMTP / STARTTLS)     |
+| Build Tool   | Maven / Gradle                    |
+
+---
+
+## Prerequisites
+
+- Java 17+
+- MySQL 8+
+- Maven or Gradle
+- A Google OAuth2 app (console.cloud.google.com)
+- A GitHub OAuth2 app (github.com/settings/developers)
+- An SMTP email account (Gmail App Password, SendGrid, etc.)
+
+---
+
+## Getting Started
+
+### 1. Clone the repository
+
+```bash
+git clone https://github.com/your-username/auth-service.git
+cd auth-service
 ```
-.gitattributes            repo attributes
-.gitignore                ignored files
-.mvn/                     Maven wrapper support
-mvnw, mvnw.cmd            Maven wrapper scripts
-pom.xml                   Maven build file (project dependencies / plugins)
+
+### 2. Set up the database
+
+```sql
+CREATE DATABASE DB_NAME;
+```
+
+### 3. Configure environment variables
+
+Create a `.env` file or set the following in your system/IDE:
+
+```env
+# Google OAuth2
+GOOGLE_CLIENT_ID=your-google-client-id
+GOOGLE_CLIENT_SECRET=your-google-client-secret
+
+# GitHub OAuth2
+GITHUB_CLIENT_ID=your-github-client-id
+GITHUB_CLIENT_SECRET=your-github-client-secret
+
+# Database
+DB_USERNAME=your-db-username
+DB_PASSWORD=your-db-password
+
+# Mail
+MAIL_USERNAME=your-email@example.com
+MAIL_APP_PASSWORD=your-app-password
+
+# JWT
+JWT_SECRET=your-very-long-secret-key
+JWT_ISSUER=your-app-name
+JWT_REF_COOKIE_NAME=refresh_token
+JWT_COOKIE_SECURE=true
+JWT_COOKIE_HTTP_ONLY=true
+JWT_COOKIE_SAME_SITE=lax
+JWT_COOKIE_DOMAIN=localhost
+```
+
+### 4. Run the application
+
+```bash
+# Maven
+./mvnw spring-boot:run
+
+# Gradle
+./gradlew bootRun
+```
+
+---
+
+## Configuration Overview
+
+All configuration lives in `src/main/resources/application.yml`.
+
+| Setting | Description |
+|---|---|
+| `security.jwt.access-token-expiration` | Access token TTL in seconds (default: 900) |
+| `security.jwt.refresh-token-expiration` | Refresh token TTL in seconds (default: 604800 / 7 days) |
+| `spring.jpa.hibernate.ddl-auto` | Set to `validate` or `none` in production |
+| `spring.datasource.hikari.*` | Connection pool settings |
+| `spring.mail.*` | SMTP configuration |
+
+---
+
+## OAuth2 Redirect URIs
+
+Register these in your OAuth2 provider dashboards:
+
+**Google:**
+```
+http://localhost:PORT/login/oauth2/code/google
+```
+
+**GitHub:**
+```
+http://localhost:PORT/login/oauth2/code/github
+```
+
+---
+
+## Frontend Integration
+
+After a successful auth flow, the user is redirected to:
+
+- **Success:** `http://localhost:5173/dashboard`
+- **Failure:** `http://localhost:5173/register`
+
+Update these under `app.auth.frontend` in `application.yml` for production.
+
+---
+
+## Security Notes
+
+- Never commit `application.yml` with real credentials — use environment variables
+- Set `spring.jpa.hibernate.ddl-auto: validate` in production
+- Set `security.jwt.cookie-secure: true` in production (requires HTTPS)
+- Rotate your JWT secret periodically
+
+---
+
+## Project Structure
+
+```
 src/
-  main/
-    java/
-      com/auth/Auth/
-        AuthApplication.java                Spring Boot application entrypoint
-        AuthServiceOTPpathnotesImpoelemt.md  notes / OTP design doc (markdown)
-        config/       configuration classes (security, app config)
-        controller/   REST controllers (AuthController.java, OtpController.java, UserController.java)
-        dto/          request/response DTOs
-        entity/       JPA entities / domain models
-        exception/    custom exceptions / handlers
-        repo/         repository interfaces (persistence)
-        security/     security configuration / filters
-        services/     service interfaces and implementations (AuthServices, UserServices, Implementation/)
-        utils/        assorted helpers/utilities
-    resources/       Spring resources (application.properties / static files)
-  test/              test sources (unit/integration tests)
+└── main/
+    ├── java/com/auth/Auth/
+    │   ├── config/        # Security, JWT, OAuth2 configuration
+    │   ├── controller/    # Auth endpoints
+    │   ├── service/       # Business logic
+    │   ├── repository/    # JPA repositories
+    │   ├── model/         # Entity classes
+    │   └── dto/           # Request / Response DTOs
+    └── resources/
+        └── application.yml
 ```
 
-How it fits together: AuthApplication boots the Spring context. Incoming HTTP requests hit controllers under controller/ (e.g., AuthController, OtpController, UserController). Controllers call service layer classes (services/) which contain business logic and coordinate persistence via repo/ interfaces (entities live in entity/). security/ and config/ contain the authentication/authorization setup (filters, config beans) applied across controllers. The OTP flow is documented in AuthServiceOTPpathnotesImpoelemt.md and implemented across controller/services/security.
+---
 
-## How to run it
-Shortest path from a fresh clone:
+## License
 
-- Build and run with the included Maven wrapper (Unix/macOS):
-  - ./mvnw spring-boot:run
-- Windows:
-  - mvnw.cmd spring-boot:run
-- Build a JAR and run:
-  - ./mvnw clean package
-  - java -jar target/*.jar
-- Run tests:
-  - ./mvnw test
-
-Typical required environment variables (common for Spring Boot apps and indicated by the repo structure):
-- SPRING_DATASOURCE_URL (jdbc URL for your DB)
-- SPRING_DATASOURCE_USERNAME
-- SPRING_DATASOURCE_PASSWORD
-- Any JWT secret or security config properties (e.g., JWT_SECRET) if used
-Check src/main/resources/application.properties (or application.yml) for exact keys.
-
-## Try asking
-- Can you provide the exact environment variables and example application.properties values needed to run the app (DB, JWT secret, port)?
-- Do you want a root README.md that documents the OTP flow in AuthServiceOTPpathnotesImpoelemt.md and the available API endpoints (AuthController, OtpController, UserController)?
-- Should I add a Dockerfile + docker-compose (Postgres) and a short GitHub Actions workflow that builds and runs tests on every push?
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

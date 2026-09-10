@@ -19,9 +19,11 @@ import org.springframework.security.core.context.SecurityContextHolder;
 import org.springframework.security.web.authentication.WebAuthenticationDetailsSource;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
+import tools.jackson.databind.ObjectMapper;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
@@ -31,61 +33,79 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
     private final JWTServices jwtServices;
     private final UserRepo userRepo;
     private final Logger logger = LoggerFactory.getLogger(JwtAuthenticationFilter.class);
+    private final ObjectMapper objectMapper; // inject this - Jackson's ObjectMapper
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain filterChain) throws ServletException, IOException {
         String header = request.getHeader("Authorization");
-        logger.info("Authorization header : {}",header);
-        if (header != null && header.startsWith("Bearer")){
+
+        if (header != null && header.startsWith("Bearer")) {
             try {
                 String token = header.substring(7);
-                if (!jwtServices.isAccessToken(token)){
-                    throw new ValidationError(
-                            "Invalid access token.",
-                            HttpStatus.UNAUTHORIZED
-                    );
+                if (!jwtServices.isAccessToken(token)) {
+                    sendError(response, HttpStatus.UNAUTHORIZED, "Invalid access token.");
+                    return; // stop the chain here
                 }
 
                 Jws<Claims> parse = jwtServices.parse(token);
                 Claims payload = parse.getPayload();
                 String userId = payload.getSubject();
                 UUID id = UserHelper.parseUUID(userId);
-                userRepo.findById(id).ifPresent(user -> {
-                    if (!user.isEnabled()) {
-                        throw new ValidationError("Accoutn is not Enabled.", HttpStatus.UNAUTHORIZED);
-                    }
-                        List<GrantedAuthority> authorities = user.getRoles() == null ? List.of() : user.getRoles()
-                                .stream().map(roles -> new SimpleGrantedAuthority(roles.getName())).collect(Collectors.toList());
-                        UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
-                                user.getEmail(),
-                                null,
-                                authorities
-                        );
-                        authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
-                        if (SecurityContextHolder.getContext().getAuthentication() == null){
-                            SecurityContextHolder.getContext().setAuthentication(authentication);
-                        }
-                });
-            }catch (ExpiredJwtException error){
-                logger.error("Error while executing the doFilterInternal.");
-                error.printStackTrace();
-                throw new ValidationError(error.getMessage(), HttpStatus.UNAUTHORIZED);
-            }catch (MalformedJwtException error){
-                logger.error("Error while executing the doFilterInternal.");
-                error.printStackTrace();
-                throw new ValidationError(error.getMessage(),HttpStatus.UNAUTHORIZED);
-            }catch (JwtException error){
-                logger.error("Error while executing the doFilterInternal.");
+
+                var userOpt = userRepo.findById(id);
+                if (userOpt.isEmpty()) {
+                    sendError(response, HttpStatus.UNAUTHORIZED, "User not found.");
+                    return;
+                }
+
+                var user = userOpt.get();
+                if (!user.isEnabled()) {
+                    sendError(response, HttpStatus.UNAUTHORIZED, "Account is not enabled.");
+                    return;
+                }
+
+                List<GrantedAuthority> authorities = user.getRoles() == null ? List.of() : user.getRoles()
+                        .stream().map(roles -> new SimpleGrantedAuthority(roles.getName())).collect(Collectors.toList());
+                UsernamePasswordAuthenticationToken authentication = new UsernamePasswordAuthenticationToken(
+                        user.getEmail(), null, authorities
+                );
+                authentication.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                if (SecurityContextHolder.getContext().getAuthentication() == null) {
+                    SecurityContextHolder.getContext().setAuthentication(authentication);
+                }
+
+            } catch (ExpiredJwtException error) {
+                logger.warn("Expired JWT: {}", error.getMessage());
+                sendError(response, HttpStatus.UNAUTHORIZED, "Token expired.");
+                return;
+            } catch (MalformedJwtException error) {
+                logger.warn("Malformed JWT: {}", error.getMessage());
+                sendError(response, HttpStatus.UNAUTHORIZED, "Malformed token.");
+                return;
+            } catch (JwtException error) {
+                logger.warn("Invalid JWT: {}", error.getMessage());
                 SecurityContextHolder.clearContext();
-                error.printStackTrace();
-                throw new ValidationError( "Invalid or expired token.",HttpStatus.UNAUTHORIZED);
-            }catch (Exception error){
-                logger.error("Error while executing the doFilterInternal.");
-                error.printStackTrace();
-                throw new ValidationError("Invalid error token.",HttpStatus.FORBIDDEN);
+                sendError(response, HttpStatus.UNAUTHORIZED, "Invalid or expired token.");
+                return;
+            } catch (Exception error) {
+                logger.error("Unexpected error in JwtAuthenticationFilter", error);
+                sendError(response, HttpStatus.FORBIDDEN, "Authentication failed.");
+                return;
             }
         }
-        filterChain.doFilter(request,response);
+        filterChain.doFilter(request, response);
+    }
+
+    private void sendError(HttpServletResponse response, HttpStatus status, String message) throws IOException {
+        response.setStatus(status.value());
+        response.setContentType("application/json");
+        response.getWriter().write(
+                objectMapper.writeValueAsString(Map.of(
+                        "status", status.value(),
+                        "error", status.getReasonPhrase(),
+                        "message", message
+                ))
+        );
     }
 
     @Override

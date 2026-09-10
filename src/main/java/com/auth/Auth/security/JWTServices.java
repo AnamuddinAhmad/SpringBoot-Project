@@ -88,12 +88,7 @@ public class JWTServices {
     }
 
     public Jws<Claims> parse(String token){
-        try {
             return Jwts.parser().verifyWith(key).build().parseSignedClaims(token);
-        }catch (JwtException error){
-            System.out.println("Error while parsing the JWT tokens.");
-            throw new ValidationError(error.getMessage(), HttpStatus.UNAUTHORIZED);
-        }
     }
 
     public boolean isAccessToken(String token){

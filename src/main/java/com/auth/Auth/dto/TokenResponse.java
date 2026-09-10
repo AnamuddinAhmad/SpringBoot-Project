@@ -5,7 +5,7 @@ public record TokenResponse(
         String refreshToken,
         long expireIn,
         String tokenType,
-        UserDTO userdto
+        UserDTO user
 ) {
 
 

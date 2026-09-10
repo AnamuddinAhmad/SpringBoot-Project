@@ -12,6 +12,7 @@ import com.auth.Auth.repo.UserRepo;
 import com.auth.Auth.security.CookieService;
 import com.auth.Auth.security.JWTServices;
 import com.auth.Auth.services.AuthServices;
+import io.jsonwebtoken.JwtException;
 import jakarta.servlet.http.Cookie;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
@@ -53,6 +54,7 @@ public class AuthController {
                 new UsernameNotFoundException("User not found"));
 
         if (!user.isEnabled()){
+
            throw ValidationError.forbidden("Account is disabled.");
         }
 
@@ -88,6 +90,12 @@ public class AuthController {
                     )
             );
 
+        } catch (DisabledException e) {
+            System.out.println("DisabledException caught in controller");
+            throw ValidationError.forbidden(
+                    "Account is disabled."
+            );
+
         } catch (BadCredentialsException | UsernameNotFoundException e) {
 
             throw ValidationError.unauthorized(
@@ -100,13 +108,7 @@ public class AuthController {
                     "Invalid email or password."
             );
 
-        } catch (DisabledException e) {
-
-            throw ValidationError.forbidden(
-                    "Account is disabled."
-            );
-
-        } catch (LockedException e) {
+        }  catch (LockedException e) {
 
             throw ValidationError.forbidden(
                     "Account is locked."
@@ -132,6 +134,33 @@ public class AuthController {
         }
     }
 
+    @PostMapping("/logout")
+    public ResponseEntity<Void> logout(@RequestBody(required = false) RefreshTokenRequest body,
+                                       HttpServletRequest request,
+                                       HttpServletResponse response) {
+
+        readRefreshTokenReq(body, request).ifPresent(refreshToken -> {
+            try {
+                if (jwtServices.isRefreshToken(refreshToken)) {
+                    String jti = jwtServices.getJti(refreshToken);
+                    refreshTokenRepo.findByJti(jti).ifPresent(storedRefreshToken -> {
+                        storedRefreshToken.setRevoked(true);
+                        refreshTokenRepo.save(storedRefreshToken);
+                    });
+                }
+            } catch (JwtException e) {
+                // token was garbage/expired/malformed — expected, safe to ignore
+
+            } catch (Exception e) {
+                // something unexpected (e.g. DB error) — worth knowing about, but still let logout succeed
+            }
+        });
+
+        cookieService.clearRefreshCookie(response);
+        cookieService.addNoHeaders(response);
+
+        return ResponseEntity.noContent().build();
+    }
 
     @PostMapping("/register")
     public ResponseEntity<UserDTO> registerUser(@RequestBody UserDTO userDTO){
@@ -141,7 +170,33 @@ public class AuthController {
     @PostMapping("/refresh")
     public ResponseEntity<TokenResponse> refreshToken(@RequestBody(required = false) RefreshTokenRequest body,
                                                       HttpServletResponse response,
-                                                      HttpServletRequest request){
+                                                      HttpServletRequest request) {
+
+        System.out.println("\n================ REFRESH DEBUG ================");
+
+        System.out.println("Request URI: " + request.getRequestURI());
+
+        System.out.println("Cookie header: " + request.getHeader("Cookie"));
+
+        Cookie[] cookies = request.getCookies();
+
+        if (cookies == null) {
+            System.out.println("COOKIES: NULL");
+        } else {
+            for (Cookie cookie : cookies) {
+                System.out.println(
+                        "COOKIE: " +
+                                cookie.getName() +
+                                " = " +
+                                cookie.getValue()
+                );
+            }
+        }
+
+        System.out.println("Body: " + body);
+
+        System.out.println("================================================\n");
+
         String refreshToken = readRefreshTokenReq(body,request).orElseThrow(()->
                 new ValidationError( "Refresh token not found.",HttpStatus.UNAUTHORIZED));
 
@@ -151,20 +206,25 @@ public class AuthController {
 
         String jti = jwtServices.getJti(refreshToken);
         UUID userId = jwtServices.getUserId(refreshToken);
+
         RefreshToken storedRefreshToken = refreshTokenRepo.findByJti(jti).orElseThrow(() ->
-                new ValidationError("Invalid JTI, RefreshToekn not reconozied.", HttpStatus.BAD_REQUEST));
+                new ValidationError("Invalid JTI, RefreshToken not recognized.", HttpStatus.BAD_REQUEST));
+
         if (storedRefreshToken.isRevoked()){
             throw ValidationError.unauthorized("Refresh token is revoked.");
         }
+
         if (storedRefreshToken.getExpiredAt().isBefore(Instant.now())){
             throw ValidationError.unauthorized("Refresh token is expired.");
         }
+
         if (!storedRefreshToken.getUser().getId().equals(userId)){
             throw ValidationError.unauthorized(
                     "Invalid refresh token."
             );
         }
         storedRefreshToken.setRevoked(true);
+
         String newJti = UUID.randomUUID().toString();
         storedRefreshToken.setReplacedByToken(newJti);
         refreshTokenRepo.save(storedRefreshToken);
